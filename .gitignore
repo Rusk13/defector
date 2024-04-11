@@ -1,1 +1,7 @@
 /__pycache__
+/build
+/dist
+mvGenTLProducer.cti
+main.spec
+pcb.yml
+dist.rar

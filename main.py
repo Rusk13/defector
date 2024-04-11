@@ -1,3 +1,8 @@
+import customtkinter as ctk
+import tkinter as tk
+from image_widgtes import *
+from PIL import Image, ImageTk
+from menu import Menu
 from harvesters.core import Harvester
 from harvesters.core import DeviceInfo
 from harvesters.core import Component2DImage
@@ -5,247 +10,143 @@ from harvesters.util.pfnc import mono_location_formats
 from PIL import Image 
 import numpy as np
 import cv2
-import matplotlib.pyplot as plt
-from ultralytics import YOLO
-import supervision as sv
+import statistics
+import yaml
+class App(ctk.CTk):
+    def __init__(self):
+        # setup
+        super().__init__()
+        ctk.set_appearance_mode('dark')
+        self.geometry('1000x600')
+        self.iconbitmap('favicon.ico')
+        self.title('Defect detector')
+        self.minsize(800,500)
+        with open('pcb.yml', 'r') as file:
+            self.pcb_list_file = yaml.safe_load(file)
+        self.init_parameters()
+        # layout
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=2, uniform='a')
+        self.columnconfigure(1, weight=6, uniform='a')
+        self.image_ratio = None
+        self.menu = Menu(self, self.exposure_time, self.red_gain, self.green_gain, self.blue_gain, self.mask_on, self.pcb_list, self.selected_model)
 
-def white_balance(img):
-    result = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l_channel, a, b = cv2.split(result)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    cl = clahe.apply(l_channel)
-    limg = cv2.merge((cl,a,b))
-    enhanced_img = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-    # avg_a = np.average(result[:, :, 1])
-    # avg_b = np.average(result[:, :, 2])
-    # result[:, :, 1] = result[:, :, 1] - ((avg_a - 128) * (result[:, :, 0] / 255.0) * 1.1)
-    # result[:, :, 2] = result[:, :, 2] - ((avg_b - 128) * (result[:, :, 0] / 255.0) * 1.1)
-    # result = cv2.cvtColor(result, cv2.COLOR_LAB2BGR)
-    return enhanced_img
 
-def to_gray(img):
-    """
-    Converts the input in grey levels
-    Returns a one channel image
-    """
-    grey_img = np.zeros(cv2.GetSize(img), img.depth, 1)
-    cv2.CvtColor(img, grey_img, cv2.CV_RGB2GRAY )
-    
-    return grey_img   
-    
-def grey_histogram(img, nBins=64):
-    """
-    Returns a one dimension histogram for the given image
-    The image is expected to have one channel, 8 bits depth
-    nBins can be defined between 1 and 255 
-    """
-    hist_size = [nBins]
-    h_ranges = [0, 255]
-    hist = cv2.CreateHist(hist_size , cv2.CV_HIST_ARRAY, [[0, 255]], 1)
-    cv2.CalcHist([img], hist)
+        # widgtes
+        # ctk.CTkButton(self, text = 'open image', command=self.open_dialog).grid(row=0, column=0)
+        self.image_import = ImageImport(self, self.import_image, self.pcb_list_file[self.selected_model.get()])
+        self.image_output = ImageOutput(self, self.resize_image)
+        self.canvas_width = 800
+        self.canvas_height = 600
+        # run
+        self.mainloop()
+    # def open_dialog(self):
+    #     self.ia.start()
+    #     self.ia.remote_device.node_map.WBOnce.execute()
+    #     print('before loop')
+    #     # while True:
+    #     self.update_frame()
 
-    return hist
+    # def update_frame(self):
+    #     with self.ia.fetch(timeout=np.float32(1)) as buffer:
+    #         component = buffer.payload.components[0]
+    #         _2d = component.data.reshape(component.height, component.width, int(component.num_components_per_pixel))
+    #         img = _2d
+    #         img = cv2.cvtColor(img, cv2.COLOR_BayerGR2RGB)
+    #         img = cv2.resize(img,(1600,900))
+    #         self.import_func(img)
+    #     self.after(1, self.update_frame)
+    def init_parameters(self):
 
-def extract_bright(grey_img, histogram=False):
-    """
-    Extracts brightest part of the image.
-    Expected to be the LEDs (provided that there is a dark background)
-    Returns a Thresholded image
-    histgram defines if we use the hist calculation to find the best margin
-    """
-    ## Searches for image maximum (brightest pixel)
-    # We expect the LEDs to be brighter than the rest of the image
-    [minVal, maxVal, minLoc, maxLoc] = cv2.MinMaxLoc(grey_img)
-    print ("Brightest pixel val is %d" %(maxVal))
-    
-    #We retrieve only the brightest part of the image
-    # Here is use a fixed margin (80%), but you can use hist to enhance this one    
-    if 0:
-        ## Histogram may be used to wisely define the margin
-        # We expect a huge spike corresponding to the mean of the background
-        # and another smaller spike of bright values (the LEDs)
-        hist = grey_histogram(img, nBins=64)
-        [hminValue, hmaxValue, hminIdx, hmaxIdx] = cv2.GetMinMaxHistValue(hist) 
-        margin = 0# statistics to be calculated using hist data    
-    else:  
-        margin = 0.8
+        self.exposure_time = ctk.IntVar(value=EXPOSURETIME_DEFAULT)
+        self.red_gain = ctk.IntVar(value=RED_DEFAULT)
+        self.green_gain = ctk.IntVar(value=GREEN_DEFAULT)
+        self.blue_gain = ctk.IntVar(value=BLUE_DEFAULT)
+        self.mask_on = ctk.BooleanVar(value=False)
+        self.pcb_list = []
+        for pcb in self.pcb_list_file:
+            self.pcb_list.append(pcb)
+        self.selected_model = tk.StringVar(value=self.pcb_list[0])
         
-    thresh = int( maxVal * margin) # in pix value to be extracted
-    print ("Threshold is defined as %d" %(thresh))
+        self.selected_model.trace_add('write', self.change_model)
+        self.exposure_time.trace_add('write', self.manipulate_camera)
+        self.red_gain.trace_add('write', self.manipulate_camera)
+        self.green_gain.trace_add('write', self.manipulate_camera)
+        self.blue_gain.trace_add('write', self.manipulate_camera)
+        self.mask_on.trace_add('write', self.change_view)
 
-    thresh_img = cv2.CreateImage(cv2.GetSize(img), img.depth, 1)
-    cv2.Threshold(grey_img, thresh_img , thresh, 255, cv2.CV_THRESH_BINARY)
-    
-    return thresh_img
+    def manipulate_camera(self, *args):
+        self.image_import.ia.remote_device.node_map.ExposureTime.value = int(self.exposure_time.get())
+        self.image_import.ia.remote_device.node_map.RGain.value = int(self.red_gain.get())
+        self.image_import.ia.remote_device.node_map.GGain.value = int(self.green_gain.get())
+        self.image_import.ia.remote_device.node_map.BGain.value = int(self.blue_gain.get())
+    def change_model(self, *args):
+        print('model: ', self.selected_model.get())
+        if self.selected_model.get() != '':
+            self.image_import.led_points = self.pcb_list_file[self.selected_model.get()]
+    def change_view(self, *args):
+        self.image_import.mask_on = self.mask_on.get()
 
-def find_leds(thresh_img):
-    """
-    Given a binary image showing the brightest pixels in an image, 
-    returns a result image, displaying found leds in a rectangle
-    """
-    contours = cv2.FindContours(thresh_img, 
-                               cv2.CreateMemStorage(), 
-                               mode=cv2.CV_RETR_EXTERNAL , 
-                               method=cv2.CV_CHAIN_APPROX_NONE , 
-                               offset=(0, 0))
-
-    regions = []
-    while contours:
-        pts = [ pt for pt in contours ]
-        x, y = zip(*pts)    
-        min_x, min_y = min(x), min(y)
-        width, height = max(x) - min_x + 1, max(y) - min_y + 1
-        regions.append((min_x, min_y, width, height))
-        contours = contours.h_next()
-
-        out_img = cv2.CreateImage(cv2.GetSize(grey_img), 8, 3)
-    for x,y,width,height in regions:
-        pt1 = x,y
-        pt2 = x+width,y+height
-        color = (0,0,255,0)
-        cv2.Rectangle(out_img, pt1, pt2, color, 2)
-
-    return out_img, regions
-
-def leds_positions(regions):
-    """
-    Function using the regions in input to calculate the position of found leds
-    """
-    centers = []
-    for x, y, width, height in regions:
-        centers.append( [x+ (width / 2),y + (height / 2)])
-
-    return centers
-
-
-h = Harvester()
-
-h.add_file('C:\\Program Files\\MATRIX VISION\\mvIMPACT Acquire\\bin\\x64\\mvGenTLProducer.cti')
-h.update()
-ia = h.create(0)
-print(dir(ia.remote_device.node_map))
-print((ia.remote_device.node_map._get_nodes))
-ia.remote_device.node_map.RGain.value = 260
-ia.remote_device.node_map.GGain.value = 200
-ia.remote_device.node_map.BGain.value = 300
-ia.remote_device.node_map.Gain.value = 6
-
-ia.remote_device.node_map.Saturation.value = 100
-ia.remote_device.node_map.Contrast.value = 100
-ia.remote_device.node_map.Height.value = 1080
-ia.remote_device.node_map.Width.value = 1920
-
-model = YOLO("yolov8n.pt")
-model.to('cuda')
-# ia.remote_device.node_map.PixelFormat.value = 'BayerGB8'
-print(ia.remote_device.node_map.Gain.value)
-
-print(dir(ia.remote_device.node_map))
-ia.start()
-while True:
-    with ia.fetch() as buffer:
-
-
-        component = buffer.payload.components[0]
-        _2d = component.data.reshape(component.height, component.width, int(component.num_components_per_pixel))
-        img = _2d
-        img = cv2.cvtColor(img, cv2.COLOR_BayerGR2RGB)
-        img = cv2.resize(img,(1600,900))
-
-        grey_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        blur = cv2.GaussianBlur(grey_img, (5, 5), 
-                       cv2.BORDER_DEFAULT)
-        ret,thresh1 = cv2.threshold(blur,127,255,cv2.THRESH_BINARY)
-        contours, hierarchy = cv2.findContours(thresh1, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        # cv2.drawContours(img, contours, -1, (0,255,0), 3)
-        # blank = np.zeros(thresh1.shape[:2], 
-        #          dtype='uint8')
- 
-        # cv2.drawContours(blank, contours, -1, 
-        #                 (255, 0, 0), 1)
-        (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(blur)
-        cv2.circle(img, maxLoc, 5, (255, 0, 0), 2)
-        ci = 0
-        prevM = cv2.moments(contours[0])
-        prevCx = int(prevM['m10']/prevM['m00'])
-        prevCy = int(prevM['m01']/prevM['m00'])
-        lineSum = 0
-        for i in contours:
-            M = cv2.moments(i)
-            if M['m00'] != 0:
-                cx = int(M['m10']/M['m00'])
-                cy = int(M['m01']/M['m00'])
-                cv2.drawContours(img, [i], -1, (0, 255, 0), 2)
-                cv2.circle(img, (cx, cy), 7, (0, 0, 255), -1)
-                cv2.putText(img, str(ci), (cx - 20, cy - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-                ci += 1
-                if abs(prevCx - cx) < 800:
-                    cv2.line(img, (prevCx, prevCy), (cx, cy), (0, 255, 0), thickness=3, lineType=8)
-                    cv2.putText(img, str(abs(prevCx - cx)), (((prevCx + cx) // 2), cy - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-                # cv2.line(img, (prevCx, prevCy), (cx, cy), (0, 255, 0), thickness=3, lineType=8)
-
-                prevCx = cx
-                prevCy = cy
-                # print(f"x: {cx} y: {cy}")
-            
-        cv2.imshow('right',img)
-
-        # img = white_balance(img)q
-        # results = model.predict(img, imgsz=640, conf=0.5, stream=True, verbose=True, stream_buffer=False)
-        # for result in results:
-        #     detections = sv.Detections.from_ultralytics(result)
-        #     bounding_box_annotator = sv.BoundingBoxAnnotator()
-        #     label_annotator = sv.LabelAnnotator()
-
-        #     labels = [
-        #         model.model.names[class_id]
-        #         for class_id
-        #         in detections.class_id
-        #     ]
-
-        #     annotated_image = bounding_box_annotator.annotate(
-        #         scene=img, detections=detections)
-        #     annotated_image = label_annotator.annotate(
-        #         scene=annotated_image, detections=detections, labels=labels)
-        # cv2.imshow('right',annotated_image)
-        # img = cv2.cvtColor(_2d, cv2.COLOR_BayerRG2BGR)
+    # def update_frame(self):
+    #     with ImageImport.ia.fetch(timeout=np.float32(1)) as buffer:
+    #         component = buffer.payload.components[0]
+    #         _2d = component.data.reshape(component.height, component.width, int(component.num_components_per_pixel))
+    #         img = _2d
+    #         img = cv2.cvtColor(img, cv2.COLOR_BayerGR2RGB)
+    #         img = cv2.resize(img,(1600,900))
+    #         self.resize_image()
+    #     self.after(1, self.update_frame)
+    def import_image(self, path):
+        self.image = Image.fromarray(path)
+        self.image_ratio = self.image.size[0] / self.image.size[1]
+        self.image_tk = ImageTk.PhotoImage(self.image)
+        self.image_import.grid_forget()
+        # if len(self.image_output.find_all()) == 0:
+        self.image_output.delete('all')
+        self.draw_image()
+        # self.image_output.create_image(int(self.image_output['width']) / 2, int(self.image_output['height']) / 2, image = self.image_tk)
         
-        # img = cv2.resize(img, (1920, 1080))
-       
-        # # balance_img = white_balance(img)
-        # cv2.imshow('right',img)
-        # cv2.waitKey(10)
-        # payload = buffer.payload
-        # component = payload.components[0]
-        # data = component.data
-        # data1 = data.astype(np.uint16)
+    def resize_image(self, event):
+        # current canvas ration
+        # print(self.image_ratio)
 
-        # result = np.zeros(data.size*2//3, np.uint16)
-        # result[0::2] = ((data1[1::3] & 15) << 8) | data1[0::3]
-        # result[1::2] = (data1[1::3] >> 4) | (data1[2::3] << 4)
-        # bayer_im = np.reshape(result, (rows, cols))
-        # bgr = cv2.cvtColor(bayer_im, cv2.COLOR_BayerBG2BGR)
-        # cv2.imshow('bgr', bgr*16)
-        # test!
-        if cv2.waitKey(1) & 0xFF == ord('w'):
-            ia.remote_device.node_map.WBOnce.execute()
-        if cv2.waitKey(1) & 0xFF == ord('e'):
-            ia.remote_device.node_map.ExposureAuto.value = 'On'
-        if cv2.waitKey(1) & 0xFF == ord('r'):
-            ia.remote_device.node_map.ExposureAuto.value = 'Off'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-# with ia.fetch() as buffer:
-#     print(buffer)
+        if self.image_ratio == None:
+            return
+        self.canvas_width = event.width
+        self.canvas_height = event.height
+        # canvas_ratio = self.canvas_width / self.canvas_height
 
-#     component = buffer.payload.components[0]
+        # # resize
+        # if canvas_ratio > self.image_ratio:
+        #     image_height = int(event.height)
+        #     image_width = int(image_height * self.image_ratio)
+        # else:
+        #     image_width = int(event.width)
+        #     image_height = int(image_width / self.image_ratio)
 
-#     _2d = component.data.reshape(component.height,component.width, int(component.num_components_per_pixel))
-#     img = _2d
-#     cv2.imwrite("savedImage.jpg", img) 
-            # Do any processing on the image data here...
-ia.stop()
-ia.destroy()
-h.reset()
+        # # place image
+        # self.image_output.delete('all')
+        # resized_image = self.image.resize((image_width, image_height))
+        # self.image_tk = ImageTk.PhotoImage(resized_image)
+        # self.image_output.create_image(event.width / 2, event.height / 2, image = self.image_tk)
+    def draw_image(self):
+        # current canvas ration
+        # print(self.image_ratio)
+        if self.image_ratio == None:
+            return
+        canvas_ratio = int(self.canvas_width) / int(self.canvas_height)
+        # resize
+        if canvas_ratio > self.image_ratio:
+            image_height = int(self.canvas_height)
+            image_width = int(image_height * self.image_ratio)
+        else:
+            image_width = int(self.canvas_width)
+            image_height = int(image_width / self.image_ratio)
+            # print(self.canvas_width, image_height)
+
+        # place image
+        self.image_output.delete('all')
+        resized_image = self.image.resize((image_width, image_height))
+        self.image_tk = ImageTk.PhotoImage(resized_image)
+        self.image_output.create_image(int(self.canvas_width) / 2, int(self.canvas_height) / 2, image = self.image_tk)
+App()
