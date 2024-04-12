@@ -41,6 +41,20 @@ class SwitchPanel(Panel):
             fg_color=SLIDER_BG,
             variable=exposure_time).grid(column = 1, row = 0, sticky = 'e')
 
+class ButtonPanel(Panel):
+    def __init__(self, parent, text, btn_func):
+        super().__init__(parent=parent)
+
+        #layout
+        self.rowconfigure((0), weight=1)
+        self.columnconfigure((0), weight=1)
+
+        # ctk.CTkLabel(self, text =  text).grid(column = 0, row = 0, sticky = 'w', padx = 5)
+        ctk.CTkButton(
+            self,
+            text=text,
+            command=btn_func).grid(column = 0, row = 0, sticky = 'news')
+
 class ComboboxPanel(Panel):
     def __init__(self, parent, text, pcb_list, selected):
         super().__init__(parent=parent)
@@ -50,9 +64,29 @@ class ComboboxPanel(Panel):
         self.columnconfigure((0,1), weight=1)
 
         ctk.CTkLabel(self, text =  text).grid(column = 0, row = 0, columnspan= 2, sticky = 'news', padx = 5)
-        ttk.Combobox(
+        self.combo = ttk.Combobox(
             self,
+            state='readonly',
             values = pcb_list,
-            state = 'readonly',
             textvariable=selected,
-            background = BACKGROUND_COLOR).grid(column = 0, row = 1, columnspan= 2, sticky = 'news')
+            background = BACKGROUND_COLOR)
+        self.combo.grid(column = 0, row = 1, columnspan= 2, sticky = 'news')
+        # ctk.CTkButton(self, text='Обновить файл', )
+class LabelPanel(Panel):
+    def __init__(self, parent, pcb_correct):
+        super().__init__(parent=parent)
+        self.rowconfigure((0), weight=1)
+        self.columnconfigure((0), weight=1)
+        print(pcb_correct)
+        # ctk.CTkLabel(self, text =  text).grid(column = 0, row = 0, sticky = 'w', padx = 5)
+        if pcb_correct.get():
+            color = 'green'
+            text = 'OK'
+        else:
+            color = 'red'
+            text = 'NOT OK'
+
+        ctk.CTkLabel(
+            self,
+            text=text,
+            bg_color=color).grid(column = 0, row = 0, sticky = 'ew')
